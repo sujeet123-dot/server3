@@ -11,12 +11,75 @@ const gaClient = axios.create({
 });
 
 const TARGET_URL = `https://www.zenithummedia.com/case-studies/`;
+
+const CAMPAIGN_PARAMS = {
+    'cs': 'google',     // utm_source
+    'cm': 'medium',     // utm_medium
+    'cn': 'ALPHA'      // utm_campaign
+};
+
 const MEASUREMENT_ID = "G-SNCY0K36MC";
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- SERVER SIDE PING LOGIC ---
-async function sendPing(ids, eventName, extraParam = {}) {
+
+async function runServerSideTracking(ids) {
+    //const initialBuffer = 5000;
+
+    console.log(`pv started ...`)
+    await sendPing(ids, 'page_view', { 
+        '_et': 0
+    })
+    console.log("pv ended ...")
+
+    const scrollDelay1 = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
+
+    await new Promise(resolve => setTimeout(resolve, scrollDelay1));
+    console.log(`Scroll started in ${scrollDelay1} sec`)
+    await sendPing(ids, 'scroll', { 
+        'epn.percent_scrolled': 90,
+        '_et': scrollDelay1.toString()
+    })
+    console.log(`Scroll endeded ...`)
+
+    const scrollDelay2 = Math.floor(Math.random() * (100000 - 90000 + 1) + 90000);
+
+    await new Promise(resolve => setTimeout(resolve, scrollDelay2));
+    console.log(`Final session started in ${scrollDelay2} sec`)
+    await sendPing(ids, 'final_session', {
+        '_et': scrollDelay2.toString(),
+        seg: '1'
+    })
+    console.log(`Final session ended`)
+
+}
+
+// --- SERVER SIDE: JUST RECEIVES AND USES IDS ---
+app.get('/', async (req, res) => {
+    // 1. GET THE EXACT IDS FROM THE BROWSER
+    const ids = {
+        clientId: req.query.cid,
+        sessionId: req.query.sid,
+        userIp: (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().replace('::ffff:', ''),
+        userAgent: req.headers['user-agent']
+    };
+
+    // Release browser immediately
+    res.status(204).send();
+
+    if (!ids.clientId && !ids.sessionId) return;
+
+    runServerSideTracking(ids);
+
+    // 2. WAIT AND SEND PINGS USING THE BROWSER'S IDENTITY
+    // await delay(25000); // 25s Scroll
+    // await sendPing(ids, 'scroll', { 'epn.percent_scrolled': 90, '_et': '25000' });
+
+    // await delay(70000); // +70s (Total 95s)
+    // await sendPing(ids, 'final_session', { '_et': '70000' });
+});
+
+async function sendPing(ids, eventName, extraParam) {
     const params = new URLSearchParams({
         v: '2',
         tid: MEASUREMENT_ID,
@@ -26,10 +89,7 @@ async function sendPing(ids, eventName, extraParam = {}) {
         uip: ids.userIp,
         _uip: ids.userIp,
         en: eventName,
-        'ep.origin': 'server',
-        'cs': 'google',
-        'cm': 'medium',
-        'cn': 'ALPHA',
+        'ep.origin': 'server', // Mark it so you know it came from Render
         ...extraParam
     });
 
@@ -38,50 +98,11 @@ async function sendPing(ids, eventName, extraParam = {}) {
             headers: { 'User-Agent': ids.userAgent }
         });
         console.log(`[SERVER] Sent ${eventName} for CID: ${ids.clientId}`);
-    } catch (err) { console.error("Ping Error:", err.message); }
+    } catch (err) { console.error("Ping Error"); }
 }
 
-async function runServerSideTracking(ids) {
-    console.log("Server tracking started...");
-    
-    // 1. Initial server-side page_view to anchor the session
-    await sendPing(ids, 'page_view_server', { '_et': '0' });
-
-    // 2. Scroll Event (20-25s)
-    const scrollDelay1 = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
-    await delay(scrollDelay1);
-    await sendPing(ids, 'scroll', { 
-        'epn.percent_scrolled': 90,
-        '_et': scrollDelay1.toString()
-    });
-
-    // 3. Final Session Event (90-100s total)
-    const scrollDelay2 = Math.floor(Math.random() * (75000 - 65000 + 1) + 65000);
-    await delay(scrollDelay2);
-    await sendPing(ids, 'final_session', {
-        '_et': scrollDelay2.toString(),
-        'seg': '1'
-    });
-    console.log(`Full session completed for ${ids.clientId}`);
-}
-
-// --- ROUTE 1: THE ACTIVATOR (SERVER ONLY) ---
-app.get('/activate-session', async (req, res) => {
-    const ids = {
-        clientId: req.query.cid,
-        sessionId: req.query.sid,
-        userIp: (req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim().replace('::ffff:', ''),
-        userAgent: req.headers['user-agent']
-    };
-
-    res.status(204).send(); // Release browser instantly
-
-    if (!ids.clientId || !ids.sessionId) return;
-    runServerSideTracking(ids);
-});
-
-// --- ROUTE 2: THE HTML BRIDGE (USER LANDING) ---
-app.get('/', (req, res) => {
+// --- HTML BRIDGE: THE "ID MASTER" ---
+app.all('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
         <html>
@@ -94,25 +115,28 @@ app.get('/', (req, res) => {
                 function gtag(){dataLayer.push(arguments);}
                 gtag('js', new Date());
 
+                // 1. BROWSER GENERATES THE IDS
                 const client_id = '100.' + Math.round(Math.random() * 1000000000);
                 const session_id = Math.round(Date.now() / 1000).toString();
 
+                // 2. CONFIG WITH EXPLICIT SOURCE TO PREVENT "UNASSIGNED"
                 gtag('config', '${MEASUREMENT_ID}', { 
                     'client_id': client_id,
                     'session_id': session_id,
                     'campaign_source': 'google',
                     'campaign_medium': 'medium',
-                    'campaign_name': 'ALPHA',
-                    'send_page_view': false // We send it manually below
+                    'campaign_name': 'ALPHA'
                 });
+                // 3. THE CHAIN: Send PV -> Success -> Send IDs to Server -> Redirect
                 gtag('event', 'page_view', {
                     'event_callback': function() {
-                        // Signal the specific activation route
-                        fetch('/activate-session?cid=' + client_id + '&sid=' + session_id)
+                        // SEND THE MASTER IDS TO THE SERVER
+                        fetch('/?cid=' + client_id + '&sid=' + session_id)
                             .finally(function() {
+                                // Redirect at 800ms mark
                                 setTimeout(function() {
                                     window.location.replace("${TARGET_URL}");
-                                }, 400);
+                                }, 300);
                             });
                     }
                 });
@@ -125,5 +149,4 @@ app.get('/', (req, res) => {
     `);
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Scaler active on port ${PORT}`));
+app.listen(process.env.PORT || 3000);
