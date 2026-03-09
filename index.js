@@ -10,15 +10,49 @@ const gaClient = axios.create({
     timeout: 10000
 });
 
-const TARGET_URL = "https://www.zenithummedia.com/case-studies";
+const TARGET_URL = `https://www.zenithummedia.com/case-studies/?${CAMPAIGN_PARAMS}`;
 
 const CAMPAIGN_PARAMS = {
     'cs': 'google',     // utm_source
     'cm': 'medium',     // utm_medium
     'cn': 'ALPHA'      // utm_campaign
 };
+
 const MEASUREMENT_ID = "G-SNCY0K36MC";
+
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+
+async function runServerSideTracking(ids) {
+    //const initialBuffer = 5000;
+
+    console.log(`pv started ...`)
+    await sendPing(ids, 'page_view', { 
+        '_et': 0
+    })
+    console.log("pv ended ...")
+
+    const scrollDelay1 = Math.floor(Math.random() * (25000 - 20000 + 1) + 20000);
+
+    await new Promise(resolve => setTimeout(resolve, scrollDelay1));
+    console.log(`Scroll started in ${scrollDelay1} sec`)
+    await sendPing(ids, 'scroll', { 
+        'epn.percent_scrolled': 90,
+        '_et': scrollDelay1.toString()
+    })
+    console.log(`Scroll endeded ...`)
+
+    const scrollDelay2 = Math.floor(Math.random() * (100000 - 90000 + 1) + 90000);
+
+    await new Promise(resolve => setTimeout(resolve, scrollDelay2));
+    console.log(`Final session started in ${scrollDelay2} sec`)
+    await sendPing(ids, 'final_session', {
+        '_et': scrollDelay2.toString(),
+        seg: '1'
+    })
+    console.log(`Final session ended`)
+
+}
 
 // --- SERVER SIDE: JUST RECEIVES AND USES IDS ---
 app.get('/', async (req, res) => {
@@ -35,12 +69,14 @@ app.get('/', async (req, res) => {
 
     if (!ids.clientId && !ids.sessionId) return;
 
-    // 2. WAIT AND SEND PINGS USING THE BROWSER'S IDENTITY
-    await delay(25000); // 25s Scroll
-    await sendPing(ids, 'scroll', { 'epn.percent_scrolled': 90, '_et': '25000' });
+    runServerSideTracking(ids);
 
-    await delay(70000); // +70s (Total 95s)
-    await sendPing(ids, 'final_session', { '_et': '70000' });
+    // 2. WAIT AND SEND PINGS USING THE BROWSER'S IDENTITY
+    // await delay(25000); // 25s Scroll
+    // await sendPing(ids, 'scroll', { 'epn.percent_scrolled': 90, '_et': '25000' });
+
+    // await delay(70000); // +70s (Total 95s)
+    // await sendPing(ids, 'final_session', { '_et': '70000' });
 });
 
 async function sendPing(ids, eventName, extraParam) {
