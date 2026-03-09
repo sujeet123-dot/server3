@@ -10,7 +10,7 @@ const gaClient = axios.create({
     timeout: 10000
 });
 
-const TARGET_URL = `https://www.zenithummedia.com/case-studies/?${CAMPAIGN_PARAMS}`;
+const TARGET_URL = `https://www.zenithummedia.com/case-studies/`;
 
 const CAMPAIGN_PARAMS = {
     'cs': 'google',     // utm_source
